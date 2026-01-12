@@ -1,0 +1,97 @@
+import tkinter as tk
+from tkinter import messagebox
+import serial
+import time
+
+# --- CONFIGURATION ---
+PORT = 'COM6' 
+
+class SimpleRFIDLoader:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("RFID Custom Data Loader")
+        self.root.geometry("450x600")
+        self.root.configure(bg="#f0f2f5")
+        
+        self.ser = None
+        self.connect_serial()
+
+        # Added UID to the fields list
+        self.fields = ["UID", "Name", "Subject", "Role", "Email Address"]
+        self.entries = {}
+
+        # --- UI DESIGN ---
+        header = tk.Frame(self.root, bg="#1976D2", height=60)
+        header.pack(fill="x")
+        tk.Label(header, text="RFID DATA WRITER", font=("Arial", 14, "bold"), fg="white", bg="#1976D2").pack(pady=15)
+
+        form_frame = tk.Frame(self.root, bg="#f0f2f5", padx=40, pady=20)
+        form_frame.pack(fill="both", expand=True)
+
+        for field in self.fields:
+            tk.Label(form_frame, text=field.upper(), font=("Arial", 9, "bold"), fg="#555", bg="#f0f2f5").pack(anchor="w", pady=(10, 0))
+            entry = tk.Entry(form_frame, font=("Arial", 11), bd=1, relief="solid")
+            entry.pack(fill="x", pady=(5, 10), ipady=5)
+            self.entries[field] = entry
+
+        # Action Button
+        self.btn_push = tk.Button(form_frame, text="PUSH DATA TO CARD", command=self.start_transfer, 
+                                 bg="#4CAF50", fg="white", font=("Arial", 11, "bold"), 
+                                 height=2, cursor="hand2", relief="flat")
+        self.btn_push.pack(fill="x", pady=30)
+
+    def connect_serial(self):
+        try:
+            self.ser = serial.Serial(PORT, 9600, timeout=1)
+            time.sleep(1) 
+        except Exception as e:
+            print(f"Offline Mode: {e}")
+
+    def start_transfer(self):
+        if not self.ser:
+            messagebox.showerror("Connection Error", f"Could not connect to {PORT}.")
+            return
+
+        # Ensure UID and Name are provided
+        if not self.entries["UID"].get().strip() or not self.entries["Name"].get().strip():
+            messagebox.showwarning("Input Required", "Please enter at least UID and Name.")
+            return
+
+        self.ser.reset_input_buffer()
+        self.ser.write(b"CHECK_READY\n")
+        
+        self.prompt_win = tk.Toplevel(self.root)
+        self.prompt_win.title("Waiting...")
+        self.prompt_win.geometry("300x150")
+        tk.Label(self.prompt_win, text="📡 Place RFID Card on Reader", font=("Arial", 10)).pack(pady=20)
+        tk.Button(self.prompt_win, text="I'VE PLACED IT", command=self.perform_write, bg="#1976D2", fg="white").pack()
+
+    def perform_write(self):
+        # Format: WRITE:UID|Name|Subject|Role|Email
+        data_string = "|".join([self.entries[f].get().strip() for f in self.fields])
+        command = f"WRITE:{data_string}\n"
+        
+        try:
+            self.ser.write(command.encode('utf-8'))
+            time.sleep(2) 
+            
+            resp = self.ser.readline().decode('utf-8', errors='ignore').strip()
+            self.prompt_win.destroy()
+
+            if "SUCCESS" in resp.upper():
+                messagebox.showinfo("Success", "Data written to card successfully!")
+                self.clear_fields()
+            else:
+                messagebox.showerror("Error", f"Hardware Response: {resp}")
+        
+        except Exception as e:
+            messagebox.showerror("Serial Error", str(e))
+
+    def clear_fields(self):
+        for entry in self.entries.values():
+            entry.delete(0, tk.END)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = SimpleRFIDLoader(root)
+    root.mainloop()
