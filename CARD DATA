@@ -1,0 +1,120 @@
+import tkinter as tk
+from tkinter import messagebox, ttk
+import pandas as pd
+import serial
+import time
+import os
+
+# --- CONFIGURATION ---
+PORT = 'COM6'  # Match your ESP32 Port
+DB_FILE = 'STUDENT DATABASE 2025.csv'
+
+class RFIDReaderSystem:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("ATTENDINN : Card Reader & Verifier")
+        self.root.geometry("500x600")
+        self.root.configure(bg="#f4f4f4")
+
+        self.ser = None
+        self.connect_serial()
+
+        # UI Components
+        self.setup_ui()
+
+    def connect_serial(self):
+        try:
+            self.ser = serial.Serial(PORT, 9600, timeout=1)
+            time.sleep(2)
+            self.ser.reset_input_buffer()
+        except Exception as e:
+            messagebox.showerror("Serial Error", f"Could not connect to {PORT}\n{e}")
+
+    def setup_ui(self):
+        # Header
+        header = tk.Frame(self.root, bg="#1976D2", height=80)
+        header.pack(fill="x")
+        tk.Label(header, text="STUDENT CARD SCANNER", font=("Arial", 16, "bold"), fg="white", bg="#1976D2").pack(pady=20)
+
+        # Control Frame
+        ctrl_frame = tk.Frame(self.root, bg="#f4f4f4", pady=20)
+        ctrl_frame.pack()
+
+        self.btn_read = tk.Button(ctrl_frame, text="SCAN CARD", command=self.read_card, 
+                                  bg="#4CAF50", fg="white", font=("Arial", 12, "bold"), width=20, height=2)
+        self.btn_read.pack()
+
+        self.status_label = tk.Label(self.root, text="Ready to scan...", font=("Arial", 10, "italic"), bg="#f4f4f4", fg="blue")
+        self.status_label.pack(pady=5)
+
+        # Result Display Area
+        self.result_frame = tk.LabelFrame(self.root, text=" Student Details ", font=("Arial", 10, "bold"), padx=20, pady=20, bg="white")
+        self.result_frame.pack(padx=30, pady=10, fill="both", expand=True)
+
+        self.details_text = tk.Text(self.result_frame, font=("Consolas", 11), height=12, state="disabled", bd=0)
+        self.details_text.pack(fill="both", expand=True)
+
+    def read_card(self):
+        if not self.ser:
+            messagebox.showerror("Error", "ESP32 is not connected.")
+            return
+
+        self.status_label.config(text="Scanning... Place card on reader", fg="orange")
+        self.root.update()
+
+        try:
+            self.ser.reset_input_buffer()
+            self.ser.write(b"READ_CARD\n") # Command for ESP32
+            time.sleep(2)
+            
+            # Read UID and clean it
+            raw_data = self.ser.readline().decode('utf-8', errors='ignore').strip()
+            # Extract only digits (in case ESP32 sends "UID: 1001")
+            scanned_uid = "".join(filter(str.isdigit, raw_data))
+
+            if not scanned_uid:
+                self.show_data("ERROR: No card detected or invalid data received.")
+                self.status_label.config(text="Scan failed.", fg="red")
+                return
+
+            self.lookup_database(scanned_uid)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Read failed: {e}")
+
+    def lookup_database(self, uid):
+        if not os.path.exists(DB_FILE):
+            self.show_data(f"ERROR: Database file '{DB_FILE}' not found.")
+            return
+
+        try:
+            df = pd.read_csv(DB_FILE)
+            # Ensure UID column is string for comparison
+            df['UID'] = df['UID'].astype(str).str.strip()
+            
+            match = df[df['UID'] == str(uid)]
+
+            if not match.empty:
+                student = match.iloc[0]
+                info = "✅ RECORD FOUND\n" + "="*25 + "\n"
+                for col in df.columns:
+                    info += f"{col:<20}: {student[col]}\n"
+                self.show_data(info)
+                self.status_label.config(text="Scan successful!", fg="green")
+            else:
+                self.show_data(f"❌ UID NOT FOUND: {uid}\n\nThe card was read successfully, but this UID does not exist in your CSV file.")
+                self.status_label.config(text="UID Mismatch", fg="red")
+
+        except Exception as e:
+            self.show_data(f"ERROR reading CSV: {e}")
+
+    def show_data(self, message):
+        self.details_text.config(state="normal")
+        self.details_text.delete("1.0", tk.END)
+        self.details_text.insert(tk.END, message)
+        self.details_text.config(state="disabled")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = RFIDReaderSystem(root)
+    root.mainloop()
