@@ -1,0 +1,130 @@
+#include <SPI.h>
+#include <MFRC522.h>
+
+// Pin Definitions
+#define SS_PIN    5   // 
+#define RST_PIN   22  // 
+#define BUZZER    13  // New: Piezo Buzzer
+#define G_LED_1   12  // New: Green LED 1
+#define G_LED_2   14  // New: Green LED 2
+#define R_LED_1   26  // New: Red LED 1
+#define R_LED_2   27  // New: Red LED 2
+
+MFRC522 mfrc522(SS_PIN, RST_PIN); // 
+MFRC522::MIFARE_Key key; // 
+
+void setup() {
+  Serial.begin(9600); // [cite: 2]
+  SPI.begin(); // [cite: 2]
+  mfrc522.PCD_Init(); // [cite: 2]
+
+  // Initialize Hardware Pins
+  pinMode(BUZZER, OUTPUT);
+  pinMode(G_LED_1, OUTPUT);
+  pinMode(G_LED_2, OUTPUT);
+  pinMode(R_LED_1, OUTPUT);
+  pinMode(R_LED_2, OUTPUT);
+
+  // Default MIFARE Key
+  for (byte i = 0; i < 6; i++) key.keyByte[i] = 0xFF; // [cite: 2]
+}
+
+// Visual and Audio feedback for success
+void signalSuccess() {
+  digitalWrite(G_LED_1, HIGH);
+  digitalWrite(G_LED_2, HIGH);
+  tone(BUZZER, 2000); // 2kHz tone
+  delay(300);
+  noTone(BUZZER);
+  digitalWrite(G_LED_1, LOW);
+  digitalWrite(G_LED_2, LOW);
+}
+
+// Visual and Audio feedback for failure
+void signalError() {
+  digitalWrite(R_LED_1, HIGH);
+  digitalWrite(R_LED_2, HIGH);
+  tone(BUZZER, 500); // 500Hz low tone
+  delay(600);
+  noTone(BUZZER);
+  digitalWrite(R_LED_1, LOW);
+  digitalWrite(R_LED_2, LOW);
+}
+
+void loop() {
+  if (Serial.available() > 0) {
+    String cmd = Serial.readStringUntil('\n'); // [cite: 3]
+    cmd.trim(); // [cite: 3]
+
+    if (cmd == "CHECK_SENSOR") { // [cite: 4]
+      byte v = mfrc522.PCD_ReadRegister(mfrc522.VersionReg); // [cite: 4]
+      if (v == 0x00 || v == 0xFF) Serial.println("NOT_READY"); // [cite: 5]
+      else Serial.println("SENSOR_READY"); // [cite: 5]
+    } 
+    else if (cmd.startsWith("WRITE:")) { // [cite: 6]
+      String uidToWrite = cmd.substring(6); // [cite: 6]
+      if (writeToCard(uidToWrite)) { // [cite: 7]
+        Serial.println("WRITE_SUCCESS"); // [cite: 7]
+        signalSuccess(); 
+      } else {
+        Serial.println("WRITE_FAIL"); // [cite: 7]
+        signalError();
+      }
+    } 
+    else if (cmd == "READ_CARD") { // [cite: 7]
+      String data = readFromCard(); // [cite: 7]
+      if (data != "") { // [cite: 8]
+        Serial.println("READ_DATA:" + data); // [cite: 8]
+        signalSuccess();
+      } else {
+        Serial.println("READ_FAIL"); // [cite: 8]
+        signalError();
+      }
+    }
+  }
+}
+
+bool writeToCard(String data) {
+  unsigned long timeout = millis() + 5000; // [cite: 8]
+  while (millis() < timeout) { // [cite: 9]
+    if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) { // [cite: 9]
+      byte buffer[16];
+      for (int i = 0; i < 16; i++) buffer[i] = (i < data.length()) ? data[i] : 0; // [cite: 10]
+      
+      MFRC522::StatusCode status = mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, 4, &key, &(mfrc522.uid)); // [cite: 11]
+      if (status != MFRC522::STATUS_OK) return false;
+
+      status = mfrc522.MIFARE_Write(4, buffer, 16); // [cite: 11]
+      mfrc522.PICC_HaltA(); // [cite: 11]
+      mfrc522.PCD_StopCrypto1(); // [cite: 11]
+      return (status == MFRC522::STATUS_OK); // [cite: 12]
+    }
+    delay(50); // [cite: 12]
+  }
+  return false;
+}
+
+String readFromCard() {
+  unsigned long timeout = millis() + 5000; // [cite: 13]
+  while (millis() < timeout) { // [cite: 14]
+    if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) { // [cite: 14]
+      byte buffer[18]; // [cite: 14]
+      byte size = sizeof(buffer); // [cite: 15]
+      
+      MFRC522::StatusCode status = mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, 4, &key, &(mfrc522.uid)); // [cite: 15]
+      if (status != MFRC522::STATUS_OK) return "";
+
+      status = mfrc522.MIFARE_Read(4, buffer, &size); // [cite: 16]
+      String out = "";
+      for (uint8_t i = 0; i < 16; i++) { 
+        if (buffer[i] != 0) out += (char)buffer[i]; // [cite: 16]
+      }
+      
+      mfrc522.PICC_HaltA(); // [cite: 17]
+      mfrc522.PCD_StopCrypto1(); // [cite: 17]
+      return out; // [cite: 17]
+    }
+    delay(50); // [cite: 18]
+  }
+  return "";
+}
